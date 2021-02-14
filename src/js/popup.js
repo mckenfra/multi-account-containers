@@ -247,17 +247,33 @@ const Logic = {
         }
       })
     ]);
-    this._identities = identities.map((identity) => {
+    const currentCookieStoreId = this._currentIdentity && this._currentIdentity.cookieStoreId;
+    return this._identities = identities.map((identity) => {
       const stateObject = state[identity.cookieStoreId];
       if (stateObject) {
         identity.hasOpenTabs = stateObject.hasOpenTabs;
         identity.hasHiddenTabs = stateObject.hasHiddenTabs;
         identity.numberOfHiddenTabs = stateObject.numberOfHiddenTabs;
         identity.numberOfOpenTabs = stateObject.numberOfOpenTabs;
+        identity.numberOfAssignments = stateObject.numberOfAssignments;
         identity.isLocked = stateObject.isLocked;
+
+        // Replace currentIdentity
+        if (identity.cookieStoreId === currentCookieStoreId) {
+          this._currentIdentity = identity;
+        }
       }
       return identity;
-    });
+    }, this);
+  },
+
+  async refreshIdentity(oldIdentity) {
+    const cookieStoreId = oldIdentity && oldIdentity.cookieStoreId;
+    return (await this.refreshIdentities()).find(identity => {
+      if (identity.cookieStoreId === cookieStoreId) {
+        return identity;
+      }
+    }) || oldIdentity;
   },
 
   getPanelSelector(panel) {
@@ -370,7 +386,7 @@ const Logic = {
       value
     });
   },
-  
+
   lockOrUnlockContainer(userContextId, isLocked) {
     return browser.runtime.sendMessage({
       method: "lockOrUnlockContainer",
@@ -379,6 +395,29 @@ const Logic = {
         isLocked: !!isLocked
       }
     });
+  },
+
+  showLockState(element, identity = {}) {
+    const icon = element.querySelector(".icon");
+    const label = element.querySelector(".label");
+    const titled = label || element;
+
+    if (icon) { icon.src = identity.isLocked ? CONTAINER_LOCKED_SRC : CONTAINER_UNLOCKED_SRC; }
+    if (label) { label.innerText = identity.isLocked ? "Locked" : "Unlocked"; }
+    titled.setAttribute("title", `${identity.isLocked ? "Lock" : "Unlock"} ${identity.name || "this"} container`);
+
+    element.classList.remove("container-locked", "container-unlocked");
+    element.classList.add(identity.isLocked ? "container-locked" : "container-unlocked");
+  },
+
+  async toggleLock(element, identity) {
+    try {
+      await Logic.lockOrUnlockContainer(Logic.userContextId(identity.cookieStoreId), !identity.isLocked);
+      identity.isLocked = !identity.isLocked;
+      this.showLockState(element, identity);
+    } catch (e) {
+      throw new Error("Failed to lock/unlock container: " + e.message);
+    }
   },
 
   generateIdentityName() {
@@ -649,8 +688,12 @@ Logic.registerPanel(P_CONTAINERS_LIST, {
     const currentTabElement = document.getElementById("current-tab");
     const assignmentCheckboxElement = document.getElementById("container-page-assigned");
     const currentTabUserContextId = Logic.userContextId(currentTab.cookieStoreId);
-    assignmentCheckboxElement.addEventListener("change", () => {
-      Logic.setOrRemoveAssignment(currentTab.id, currentTab.url, currentTabUserContextId, !assignmentCheckboxElement.checked);
+    assignmentCheckboxElement.addEventListener("change", async () => {
+      await Logic.setOrRemoveAssignment(currentTab.id, currentTab.url, currentTabUserContextId, !assignmentCheckboxElement.checked);
+
+      // Refresh isLocked icon (only show if identity has assignments)
+      await Logic.refreshIdentities();
+      this.prepareIdentitiesList();
     });
     currentTabElement.hidden = !currentTab;
     this.setupAssignmentCheckbox(false, currentTabUserContextId);
@@ -670,17 +713,16 @@ Logic.registerPanel(P_CONTAINERS_LIST, {
     }
   },
 
-  // This method is called when the panel is shown.
-  async prepare() {
+  async prepareIdentitiesList() {
     const fragment = document.createDocumentFragment();
-
-    this.prepareCurrentTabHeader();
 
     Logic.identities().forEach(identity => {
       const hasTabs = (identity.hasHiddenTabs || identity.hasOpenTabs);
+      const hasAssignments = identity.numberOfAssignments > 0;
       const tr = document.createElement("tr");
       const context = document.createElement("td");
       const manage = document.createElement("td");
+      const lock = document.createElement("div");
 
       tr.classList.add("container-panel-row");
 
@@ -696,9 +738,14 @@ Logic.registerPanel(P_CONTAINERS_LIST, {
             data-identity-color="${identity.color}">
           </div>
         </div>
-        <div class="container-name truncate-text"></div>`;
+        <div class="userContext-name-wrapper">
+          <div class="container-name truncate-text"></div>
+        </div>`;
       context.querySelector(".container-name").textContent = identity.name;
       manage.innerHTML = "<img src='/img/container-arrow.svg' class='show-tabs pop-button-image-small' />";
+      lock.classList.add("container-lockorunlock");
+      lock.innerHTML = "<img class='icon' />";
+      Logic.showLockState(lock, identity);
 
       fragment.appendChild(tr);
 
@@ -708,9 +755,15 @@ Logic.registerPanel(P_CONTAINERS_LIST, {
         tr.appendChild(manage);
       }
 
+      if (hasAssignments) {
+        context.appendChild(lock);
+      }
+
       Logic.addEnterHandler(tr, async (e) => {
-        if (e.target.matches(".open-newtab")
-          || e.target.parentNode.matches(".open-newtab")
+        if (e.target.closest(".container-lockorunlock")) {
+          const lock = e.target.closest(".container-lockorunlock");
+          Logic.toggleLock(lock, identity);
+        } else if (e.target.closest(".open-newtab")
           || e.type === "keydown") {
           try {
             browser.tabs.create({
@@ -730,11 +783,18 @@ Logic.registerPanel(P_CONTAINERS_LIST, {
 
     list.innerHTML = "";
     list.appendChild(fragment);
+  },
+
+  // This method is called when the panel is shown.
+  async prepare() {
+    this.prepareCurrentTabHeader();
+    this.prepareIdentitiesList();
+
     /* Not sure why extensions require a focus for the doorhanger,
        however it allows us to have a tabindex before the first selected item
      */
     const focusHandler = () => {
-      list.querySelector("tr .clickable").focus();
+      document.querySelector(".identities-list tbody tr .clickable").focus();
       document.removeEventListener("focus", focusHandler);
     };
     document.addEventListener("focus", focusHandler);
@@ -929,7 +989,9 @@ Logic.registerPanel(P_CONTAINERS_EDIT, {
               data-identity-color="${identity.color}">
             </div>
           </div>
-          <div class="container-name truncate-text"></div>
+          <div class="userContext-name-wrapper">
+            <div class="container-name truncate-text"></div>
+          </div>
         </td>
         <td class="edit-container pop-button edit-container-icon">
           <img
@@ -1024,7 +1086,7 @@ Logic.registerPanel(P_CONTAINER_EDIT, {
     }
   },
 
-  showAssignedContainers(assignments, isLocked) {
+  showAssignedContainers(identity, assignments) {
     const assignmentPanel = document.getElementById("edit-sites-assigned");
     const assignmentKeys = Object.keys(assignments);
     assignmentPanel.hidden = !(assignmentKeys.length > 0);
@@ -1035,30 +1097,21 @@ Logic.registerPanel(P_CONTAINER_EDIT, {
       while (tableElement.firstChild) {
         tableElement.firstChild.remove();
       }
-      
+
       /* Container locking: https://github.com/mozilla/multi-account-containers/issues/847 */
-      const lockOrUnlockIcon = isLocked ? CONTAINER_LOCKED_SRC : CONTAINER_UNLOCKED_SRC;
-      const lockOrUnlockLabel = isLocked ? "Locked" : "Unlocked";
-      const lockOrUnlockClass = isLocked ? "container-locked" : "container-unlocked";
-      const lockElement = document.createElement("div");
-      lockElement.innerHTML = escaped`
-        <img class="icon" src="${lockOrUnlockIcon}">
-        <div title="${lockOrUnlockLabel}">
-          ${lockOrUnlockLabel}
-        </div>`;
-      lockElement.classList.add("container-info-tab-row", "clickable", "container-lockorunlock", lockOrUnlockClass);
-      tableElement.appendChild(lockElement);
-      
-      Logic.addEnterHandler(lockElement, async () => {
-        try {
-          await Logic.lockOrUnlockContainer(Logic.currentUserContextId(), !isLocked);
-          this.showAssignedContainers(assignments, !isLocked);
-        } catch (e) {
-          throw new Error("Failed to lock/unlock container: " + e.message);
-        }
+      const lock = document.createElement("div");
+      lock.innerHTML = escaped`
+        <img class="icon">
+        <div class="label">`;
+      lock.classList.add("container-lockorunlock", "container-info-tab-row", "clickable");
+      Logic.showLockState(lock, identity);
+      tableElement.appendChild(lock);
+
+      Logic.addEnterHandler(lock, () => {
+        Logic.toggleLock(lock, identity);
       });
       /* Container locking end */
-      
+
       /* Assignment list */
       assignmentKeys.forEach((siteKey) => {
         const site = assignments[siteKey];
@@ -1083,9 +1136,9 @@ Logic.registerPanel(P_CONTAINER_EDIT, {
           // Lets show the message to the current tab
           // TODO remove then when firefox supports arrow fn async
           const currentTab = await Logic.currentTab();
-          Logic.setOrRemoveAssignment(currentTab.id, assumedUrl, userContextId, true);
+          await Logic.setOrRemoveAssignment(currentTab.id, assumedUrl, userContextId, true);
           delete assignments[siteKey];
-          that.showAssignedContainers(assignments, isLocked);
+          that.showAssignedContainers(await Logic.refreshIdentity(identity), assignments);
         });
         trElement.classList.add("container-info-tab-row", "clickable");
         tableElement.appendChild(trElement);
@@ -1129,7 +1182,7 @@ Logic.registerPanel(P_CONTAINER_EDIT, {
 
     const userContextId = Logic.currentUserContextId();
     const assignments = await Logic.getAssignmentObjectByContainer(userContextId);
-    this.showAssignedContainers(assignments, identity.isLocked);
+    this.showAssignedContainers(identity, assignments);
     document.querySelector("#edit-container-panel .panel-footer").hidden = !!userContextId;
 
     document.querySelector("#edit-container-panel-name-input").value = identity.name || "";
