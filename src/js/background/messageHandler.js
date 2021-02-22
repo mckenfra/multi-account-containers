@@ -46,6 +46,12 @@ const messageHandler = {
       case "setTabPopupPosition":
         response = recordManager.setTabPopupPosition(m.tabId, m.x, m.y);
         break;
+      case "setOrRemoveWildcard":
+        // Wildcard subdomains: https://github.com/mozilla/multi-account-containers/issues/473
+        response = browser.tabs.get(m.tabId).then((tab) => {
+          return assignManager._setOrRemoveWildcard(tab.id, m.url, m.userContextId, m.wildcard);
+        });
+        break;
       case "sortTabs":
         backgroundLogic.sortTabs();
         break;
@@ -106,7 +112,7 @@ const messageHandler = {
         if (typeof message.url === "undefined") {
           throw new Error("Missing message.url");
         }
-        response = assignManager.storageArea.get(message.url);
+        response = assignManager.storageArea.matchUrl(message.url);
         break;
       default:
         throw new Error("Unknown message.method");

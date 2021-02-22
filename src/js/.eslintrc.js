@@ -4,6 +4,8 @@ module.exports = {
   ],
   "globals": {
     "recordManager": "readonly",
+    "utils": false,
+    "wildcardManager": false,
     "assignManager": true,
     "badge": true,
     "backgroundLogic": true,
