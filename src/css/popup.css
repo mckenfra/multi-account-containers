@@ -953,7 +953,7 @@ span ~ .panel-header-text {
 }
 
 .container-lockorunlock.container-locked * {
-  fill: red;
+  fill: #ff613d;
   filter: url('/img/filters.svg#fill');
 }
 
