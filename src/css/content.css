@@ -1,27 +1,151 @@
-.container-notification {
-  align-items: center;
-  background: #efefef;
-  color: #003f07;
-  display: flex;
-  font: 12px sans-serif;
+:root {
+  /* calculated from 12px */
+  --block-line-separation-size: 0.33em; /* 10px */
+
+  /* Use for url and icon size */
+  --icon-button-size: calc(calc(var(--block-line-separation-size) * 2) + 1.66em); /* 20px */
+}
+
+#container-notifications,
+#container-notifications * {
+  all: unset;
+  display: block;
+}
+
+#container-notifications {
   inline-size: 100vw;
-  justify-content: start;
-  offset-block-start: 0;
-  offset-inline-start: 0;
-  padding-block-end: 8px;
-  padding-block-start: 8px;
-  padding-inline-end: 8px;
-  padding-inline-start: 8px;
+  inset-block-start: 0; /* stylelint-disable-line property-no-unknown */
+  inset-inline-start: 0; /* stylelint-disable-line property-no-unknown */
+  margin-block-end: 0;
+  margin-block-start: 0;
+  margin-inline-end: 0;
+  margin-inline-start: 0;
+  padding-block-end: 0;
+  padding-block-start: 0;
+  padding-inline-end: 0;
+  padding-inline-start: 0;
   position: fixed;
-  text-align: start;
-  transform: translateY(-100%);
-  transition: transform 0.3s cubic-bezier(0.07, 0.95, 0, 1) 0.3s;
   z-index: 999999999999;
 }
 
-.container-notification img {
-  block-size: 16px;
-  display: inline-block;
-  inline-size: 16px;
+#container-notifications > .popup {
+  border: 1px solid;
+  inset-block-start: 4px; /* stylelint-disable-line property-no-unknown */
+  inset-inline-end: 3em; /* stylelint-disable-line property-no-unknown */
+  position: fixed;
+  z-index: 2;
+}
+
+#container-notifications > .popup > .draggable {
+  background: #ebebeb url('../img/drag.svg');
+  background-size: 100% 100%;
+  block-size: var(--icon-button-size);
+  border-block-end: 0.5px solid darkgray;
+  inline-size: 100%;
+  z-index: 3;
+}
+
+#container-notifications > .popup > .draggable-mask {
+  background-color: black;
+  display: none;
+  inset-block-end: 0; /* stylelint-disable-line property-no-unknown */
+  inset-block-start: 0; /* stylelint-disable-line property-no-unknown */
+  inset-inline-end: 0; /* stylelint-disable-line property-no-unknown */
+  inset-inline-start: 0; /* stylelint-disable-line property-no-unknown */
+  opacity: 0.5;
+  position: absolute;
+  z-index: 2;
+}
+
+#container-notifications > .popup.drag > .draggable-mask {
+  display: block;
+}
+
+#container-notifications > .message.recording {
+  z-index: 1;
+}
+
+#container-notifications > .message {
+  max-block-size: 0;
+  opacity: 0;
+  overflow: hidden;
+  position: relative;
+  transition: opacity 0.6s ease-in, max-block-size 1s cubic-bezier(0.07, 0.95, 0, 1);
+}
+
+#container-notifications > .message.show {
+  max-block-size: 500px;
+  opacity: 1;
+  transition-property: max-block-size;
+  transition-timing-function: ease-in;
+}
+
+#container-notifications > .message:hover,
+#container-notifications > .message:focus,
+#container-notifications > .message:visited {
+  color: #003f07;
+  text-decoration: none;
+}
+
+#container-notifications > .message > .real {
+  inset-block-end: 0; /* stylelint-disable-line property-no-unknown */
+  position: absolute;
+}
+
+#container-notifications > .message > .dummy {
+  visibility: hidden;
+}
+
+#container-notifications > .message > div > div {
+  align-items: stretch;
+  background: #efefef;
+  block-size: 3em;
+  color: #003f07;
+  display: flex;
+  font: 1em sans-serif;
+  inline-size: 100vw;
+}
+
+#container-notifications > .message > div > div > .logo {
+  align-self: center;
+  block-size: 1em;
+  flex: 0 0 1em;
   margin-inline-end: 3px;
+  margin-inline-start: 8px;
+}
+
+#container-notifications > .message > div > div > .title {
+  align-self: center;
+  flex: 0;
+  font-weight: bold;
+  margin-inline-end: 1em;
+  margin-inline-start: 0.5em;
+  white-space: nowrap;
+}
+
+#container-notifications > .message > div > div > .text {
+  align-self: center;
+  flex: 1;
+}
+
+#container-notifications > .message > div > div > .close {
+  background: url('../img/container-close-tab.svg');
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: 50%;
+  flex: 0 0 2em;
+  margin-inline-end: 0.5em;
+  opacity: 0.5;
+}
+
+#container-notifications > .message > div > div > .close:hover {
+  opacity: 1;
+}
+
+#container-notifications > .message.recording > div > div {
+  background: #fcc;
+}
+
+#container-notifications > .message.recording > div > div > .title {
+  color: red;
 }
