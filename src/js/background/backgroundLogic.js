@@ -146,6 +146,22 @@ const backgroundLogic = {
     }
   },
 
+  // https://github.com/mozilla/multi-account-containers/issues/847
+  async lockOrUnlockContainer(options) {
+    if (!("userContextId" in options)) {
+      return Promise.reject("lockOrUnlockContainer must be called with userContextId argument.");
+    }
+
+    const cookieStoreId = this.cookieStoreId(options.userContextId);
+    const containerState = await identityState.storageArea.get(cookieStoreId);
+    if (options.isLocked) {
+      containerState.isLocked = "locked";
+    } else {
+      delete containerState.isLocked;
+    }
+    return await identityState.storageArea.set(cookieStoreId, containerState);
+  },
+
 
   async moveTabsToWindow(options) {
     const requiredArguments = ["cookieStoreId", "windowId"];
@@ -252,11 +268,21 @@ const backgroundLogic = {
         hasHiddenTabs: !!containerState.hiddenTabs.length,
         hasOpenTabs: !!openTabs.length,
         numberOfHiddenTabs: containerState.hiddenTabs.length,
-        numberOfOpenTabs: openTabs.length
+        numberOfOpenTabs: openTabs.length,
+        isLocked: !!containerState.isLocked
       };
       return;
     });
     await Promise.all(identitiesPromise);
+
+    // Add number of assignments for each identity
+    const numbersOfAssignments = await assignManager.storageArea.getNumbersOfAssignments();
+    Object.keys(numbersOfAssignments).forEach(userContextId => {
+      const cookieStoreId = backgroundLogic.cookieStoreId(userContextId);
+      const identity = identitiesOutput[cookieStoreId];
+      if (identity) { identity.numberOfAssignments = numbersOfAssignments[userContextId]; }
+    });
+
     return identitiesOutput;
   },
 

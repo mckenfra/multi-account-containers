@@ -127,6 +127,16 @@ const assignManager = {
       delete siteSettings.hostname;
       delete siteSettings.wildcard;
       delete siteSettings.exemptedTabs;
+    },
+
+    async getNumbersOfAssignments() {
+      return Object.values(await this.area.getAll()).reduce((result, site) => {
+        const userContextId = site.userContextId;
+        if (userContextId !== undefined) {
+          result[userContextId] = (result[userContextId] || 0) + 1;
+        }
+        return result;
+      }, {});
     }
   },
 
@@ -184,16 +194,39 @@ const assignManager = {
     }
     const userContextId = this.getUserContextIdFromCookieStore(tab);
 
-    // Recording
-    if (this._determineSetAssignmentDueToRecording(tab.id, options.url, siteSettings)) {
-      await this._setOrRemoveAssignment(tab.id, options.url, userContextId, false);
+    // https://github.com/mozilla/multi-account-containers/issues/847
+    //
+    // Handle the case where this request's URL is not assigned to any particular
+    // container. We must do the following check:
+    //
+    // If the current tab's container is "unlocked", we can just go ahead
+    // and open the URL in the current tab, since an "unlocked" container accepts
+    // any-and-all sites.
+    //
+    // But if the current tab's container has been "locked" by the user, then we must
+    // re-open the page in the default container, because the user doesn't want random
+    // sites polluting their locked container.
+    //
+    // For example:
+    //   - the current tab's container is locked and only allows "www.google.com"
+    //   - the incoming request is for "www.amazon.com", which has no specific container assignment
+    //   - in this case, we must re-open "www.amazon.com" in a new tab in the default container
+    const mustReloadPageInDefaultContainerDueToLocking = await this._determineMustReloadPageInDefaultContainerDueToLocking(siteSettings, tab);
+
+    if (!mustReloadPageInDefaultContainerDueToLocking) {
+
+      // Recording
+      if (this._determineSetAssignmentDueToRecording(tab.id, options.url, siteSettings)) {
+        await this._setOrRemoveAssignment(tab.id, options.url, userContextId, false);
+      }
+
+      if (!siteSettings
+          || siteSettings.userContextId === userContextId
+          || siteSettings.exemptedTabs.includes(tab.id)) {
+        return {};
+      }
     }
 
-    if (!siteSettings
-        || siteSettings.userContextId === userContextId
-        || siteSettings.exemptedTabs.includes(tab.id)) {
-      return {};
-    }
     const removeTab = backgroundLogic.NEW_TAB_PAGES.has(tab.url)
       || (messageHandler.lastCreatedTab
         && messageHandler.lastCreatedTab.id === tab.id);
@@ -236,15 +269,24 @@ const assignManager = {
       }
     }
 
-    this.reloadPageInContainer(
-      options.url,
-      userContextId,
-      siteSettings.userContextId,
-      tab.index + 1,
-      tab.active,
-      siteSettings.neverAsk,
-      openTabId
-    );
+    if (mustReloadPageInDefaultContainerDueToLocking) {
+      this.reloadPageInDefaultContainer(
+        options.url,
+        tab.index + 1,
+        tab.active,
+        openTabId
+      );
+    } else {
+      this.reloadPageInContainer(
+        options.url,
+        userContextId,
+        siteSettings.userContextId,
+        tab.index + 1,
+        tab.active,
+        siteSettings.neverAsk,
+        openTabId
+      );
+    }
     this.calculateContextMenu(tab);
 
     /* Removal of existing tabs:
@@ -264,6 +306,25 @@ const assignManager = {
     return {
       cancel: true,
     };
+  },
+
+  async _determineMustReloadPageInDefaultContainerDueToLocking(siteSettings, tab) {
+    // Tab doesn't support cookies, so containers not supported either.
+    if (!("cookieStoreId" in tab)) {
+      return false;
+    }
+
+    // Requested page has been assigned to a specific container.
+    // I.e. it will be opened in that container anyway, so we don't need to check if the
+    // current tab's container is locked or not.
+    if (siteSettings) {
+      return false;
+    }
+
+    // Requested page is not assigned to a specific container. If the current tab's container
+    // is locked, then the page must be reloaded in the default container.
+    const currentContainerState = await identityState.storageArea.get(tab.cookieStoreId);
+    return currentContainerState && currentContainerState.isLocked;
   },
 
   init() {
@@ -449,6 +510,9 @@ const assignManager = {
     } else {
       await this.storageArea.remove(siteId);
       actionName = "Successfully removed from this container";
+
+      // Unlock container if now empty
+      await this._unlockContainerIfHasNoAssignments(userContextId);
     }
     if (!options.silent) {
       const hostname = new window.URL(pageUrl).hostname;
@@ -467,10 +531,36 @@ const assignManager = {
     const siteSettings = await this.storageArea.get(siteId);
     const neverAsk = siteSettings && siteSettings.neverAsk;
 
+    // Get existing identity, so we can preserve isLocked property
+    const cookieStoreId = backgroundLogic.cookieStoreId(userContextId);
+    const oldIdentity = await identityState.storageArea.get(cookieStoreId);
+
     // Remove assignment
     await this._setOrRemoveAssignment(tabId, pageUrl, userContextId, true, {silent:true});
     // Add assignment
     await this._setOrRemoveAssignment(tabId, pageUrl, userContextId, false, {silent:true, wildcard:wildcard, neverAsk:neverAsk});
+
+    // Restore isLocked
+    if (oldIdentity.isLocked) {
+      const newIdentity = await identityState.storageArea.get(cookieStoreId);
+      if (newIdentity && !newIdentity.isLocked) {
+        await backgroundLogic.lockOrUnlockContainer({
+          userContextId,
+          isLocked: true
+        });
+      }
+    }
+  },
+
+  async _unlockContainerIfHasNoAssignments(userContextId) {
+    const assignments = await this.storageArea.getByContainer(userContextId);
+    const hasAssignments = assignments && Object.keys(assignments).length > 0;
+    if (!hasAssignments) {
+      await backgroundLogic.lockOrUnlockContainer({
+        userContextId: userContextId,
+        isLocked: false
+      });
+    }
   },
 
   async _getAssignment(tab) {
@@ -548,6 +638,28 @@ const assignManager = {
       const charCode = c.charCodeAt(0).toString(16);
       return `%${charCode}`;
     });
+  },
+
+  reloadPageInDefaultContainer(url, index, active, openerTabId) {
+    // To create a new tab in the default container, it is easiest just to omit the
+    // cookieStoreId entirely.
+    //
+    // Unfortunately, if you create a new tab WITHOUT a cookieStoreId but WITH an openerTabId,
+    // then the new tab automatically inherits the opener tab's cookieStoreId.
+    // I.e. it opens in the wrong container!
+    //
+    // So we have to explicitly pass in a cookieStoreId when creating the tab, since we
+    // are specifying the openerTabId. There doesn't seem to be any way
+    // to look up the default container's cookieStoreId programatically, so sadly
+    // we have to hardcode it here as "firefox-default". This is potentially
+    // not cross-browser compatible.
+    //
+    // Note that we could have just omitted BOTH cookieStoreId and openerTabId. But the
+    // drawback then is that if the user later closes the newly-created tab, the browser
+    // does not automatically return to the original opener tab. To get this desired behaviour,
+    // we MUST specify the openerTabId when creating the new tab.
+    const cookieStoreId = "firefox-default";
+    browser.tabs.create({url, cookieStoreId, index, active, openerTabId});
   },
 
   reloadPageInContainer(url, currentUserContextId, userContextId, index, active, neverAsk = false, openerTabId = null) {

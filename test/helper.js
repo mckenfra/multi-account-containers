@@ -54,12 +54,19 @@ module.exports = {
     async clickLastMatchingElementByQuerySelector(querySelector) {
       await popup.helper.clickElementByQuerySelectorAll(querySelector, "last");
     },
-    
+
     // Wildcard subdomains: https://github.com/mozilla/multi-account-containers/issues/473
     async setWildcard(tab, wildcard) {
       const Logic = popup.window.evalScript("Logic");
       const userContextId = Logic.userContextId(tab.cookieStoreId);
       await Logic.setOrRemoveWildcard(tab.id, tab.url, userContextId, wildcard);
+    },
+
+    // https://github.com/mozilla/multi-account-containers/issues/847
+    async setContainerIsLocked(cookieStoreId, isLocked) {
+      const Logic = popup.window.evalScript("Logic");
+      const userContextId = Logic.userContextId(cookieStoreId);
+      await Logic.lockOrUnlockContainer(userContextId, isLocked);
     }
   }
 };

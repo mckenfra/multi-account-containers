@@ -19,6 +19,9 @@ const messageHandler = {
       case "createOrUpdateContainer":
         response = backgroundLogic.createOrUpdateContainer(m.message);
         break;
+      case "lockOrUnlockContainer":
+        response = backgroundLogic.lockOrUnlockContainer(m.message);
+        break;
       case "neverAsk":
         assignManager._neverAsk(m);
         break;
